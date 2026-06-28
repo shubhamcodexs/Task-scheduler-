@@ -1,0 +1,120 @@
+const Task = require("../models/Task");
+
+// @desc    Create a new task
+// @route   POST /api/tasks
+// @access  Public
+const createTask = async (req, res, next) => {
+  try {
+    const { title, description, scheduledTime } = req.body;
+
+    // Validate scheduledTime is in the future
+    if (new Date(scheduledTime) <= new Date()) {
+      return res.status(400).json({
+        success: false,
+        message: "Scheduled time must be in the future",
+      });
+    }
+
+    const task = await Task.create({ title, description, scheduledTime });
+
+    // Notify all connected clients in real-time
+    global.io.emit("task:created", {
+      task,
+      message: `New task "${task.title}" scheduled for ${new Date(task.scheduledTime).toLocaleString()}`,
+    });
+
+    res.status(201).json({ success: true, data: task });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get all tasks (with optional status filter)
+// @route   GET /api/tasks
+// @access  Public
+const getTasks = async (req, res, next) => {
+  try {
+    const { status } = req.query;
+    const filter = status ? { status } : {};
+
+    const tasks = await Task.find(filter).sort({ scheduledTime: 1 });
+
+    res.json({ success: true, count: tasks.length, data: tasks });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get a single task by ID
+// @route   GET /api/tasks/:id
+// @access  Public
+const getTask = async (req, res, next) => {
+  try {
+    const task = await Task.findById(req.params.id);
+
+    if (!task) {
+      return res.status(404).json({ success: false, message: "Task not found" });
+    }
+
+    res.json({ success: true, data: task });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update a task
+// @route   PUT /api/tasks/:id
+// @access  Public
+const updateTask = async (req, res, next) => {
+  try {
+    const { scheduledTime } = req.body;
+
+    // If rescheduling, ensure new time is in future
+    if (scheduledTime && new Date(scheduledTime) <= new Date()) {
+      return res.status(400).json({
+        success: false,
+        message: "Scheduled time must be in the future",
+      });
+    }
+
+    const task = await Task.findByIdAndUpdate(
+      req.params.id,
+      { ...req.body, notified: false }, // reset notified on update
+      { new: true, runValidators: true }
+    );
+
+    if (!task) {
+      return res.status(404).json({ success: false, message: "Task not found" });
+    }
+
+    global.io.emit("task:updated", { task, message: `Task "${task.title}" was updated` });
+
+    res.json({ success: true, data: task });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Delete a task
+// @route   DELETE /api/tasks/:id
+// @access  Public
+const deleteTask = async (req, res, next) => {
+  try {
+    const task = await Task.findByIdAndDelete(req.params.id);
+
+    if (!task) {
+      return res.status(404).json({ success: false, message: "Task not found" });
+    }
+
+    global.io.emit("task:deleted", {
+      taskId: req.params.id,
+      message: `Task "${task.title}" was deleted`,
+    });
+
+    res.json({ success: true, message: "Task deleted successfully" });
+  } catch (error) {
+    next(error);
+  }
+};
+
+module.exports = { createTask, getTasks, getTask, updateTask, deleteTask };
