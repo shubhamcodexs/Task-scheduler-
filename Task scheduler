@@ -1,0 +1,93 @@
+const cron = require("node-cron");
+const Task = require("../models/Task");
+
+const initScheduler = () => {
+  // Runs every minute to check for due tasks
+  cron.schedule("* * * * *", async () => {
+    console.log(`[Scheduler] ⏰ Checking for pending tasks at ${new Date().toLocaleTimeString()}`);
+
+    try {
+      const now = new Date();
+
+      // Find all pending tasks whose scheduled time has passed
+      const dueTasks = await Task.find({
+        status: "pending",
+        scheduledTime: { $lte: now },
+        notified: false,
+      });
+
+      if (dueTasks.length === 0) {
+        return; // Nothing to do
+      }
+
+      console.log(`[Scheduler] Found ${dueTasks.length} due task(s)`);
+
+      for (const task of dueTasks) {
+        // Mark task as running
+        task.status = "running";
+        await task.save();
+
+        // Emit real-time notification that task has started
+        global.io.emit("task:notification", {
+          taskId: task._id,
+          title: task.title,
+          status: "running",
+          message: `🔄 Task "${task.title}" is now running!`,
+          timestamp: new Date(),
+        });
+
+        console.log(`[Scheduler] Task started: "${task.title}"`);
+
+        // Simulate task execution (replace with real logic as needed)
+        executeTask(task);
+      }
+    } catch (error) {
+      console.error("[Scheduler] Error:", error.message);
+    }
+  });
+
+  console.log("⏳ Task scheduler initialized — checking every minute");
+};
+
+// Simulates running a task and marks it complete
+const executeTask = (task) => {
+  const executionTime = Math.floor(Math.random() * 4000) + 2000; // 2–6 seconds
+
+  setTimeout(async () => {
+    try {
+      task.status = "completed";
+      task.notified = true;
+      await task.save();
+
+      // Emit real-time completion notification
+      global.io.emit("task:completed", {
+        taskId: task._id,
+        title: task.title,
+        status: "completed",
+        message: `✅ Task "${task.title}" completed successfully!`,
+        timestamp: new Date(),
+      });
+
+      console.log(`[Scheduler] Task completed: "${task.title}"`);
+    } catch (err) {
+      // Mark as failed if something goes wrong
+      try {
+        task.status = "failed";
+        task.notified = true;
+        await task.save();
+
+        global.io.emit("task:failed", {
+          taskId: task._id,
+          title: task.title,
+          status: "failed",
+          message: `❌ Task "${task.title}" failed!`,
+          timestamp: new Date(),
+        });
+      } catch (saveErr) {
+        console.error("[Scheduler] Failed to update task status:", saveErr.message);
+      }
+    }
+  }, executionTime);
+};
+
+module.exports = { initScheduler };
